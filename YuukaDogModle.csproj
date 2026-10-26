@@ -1,0 +1,19 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+	<PropertyGroup>
+		<TargetFramework>netstandard2.1</TargetFramework>
+		<Nullable>enable</Nullable>
+		<IsMac Condition="'$([System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform($([System.Runtime.InteropServices.OSPlatform]::OSX)))'">true</IsMac>
+		<DuckovPath>D:\Steam\steamapps\common\Escape from Duckov</DuckovPath>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<Reference Include="$(DuckovPath)\Duckov_Data\Managed\FMODUnity.dll" />
+		<Reference Include="$(DuckovPath)\Duckov_Data\Managed\SodaLocalization.dll" />
+		<Reference Include="$(DuckovPath)\Duckov_Data\Managed\TeamSoda.Duckov.Core.dll" />
+		<Reference Include="$(DuckovPath)\Duckov_Data\Managed\UnityEngine.AnimationModule.dll" />
+		<Reference Include="$(DuckovPath)\Duckov_Data\Managed\UnityEngine.AssetBundleModule.dll" />
+		<Reference Include="$(DuckovPath)\Duckov_Data\Managed\UnityEngine.CoreModule.dll" />
+	</ItemGroup>
+
+</Project>

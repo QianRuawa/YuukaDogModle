@@ -1,0 +1,370 @@
+﻿using Duckov.Modding;
+using System;
+using System.Collections;
+using System.IO;
+using UnityEngine;
+
+namespace SimplePetMod
+{
+    public class ModBehaviour : ModBehaviour
+    {
+        private AssetBundle loadedBundle;
+        private GameObject loadedObject;
+        private GameObject instantedObject;
+        private Animator petAnimator;
+        private CharacterModel characterModel;
+        private Movement movement;
+        
+        // 要隐藏的原宠物路径
+        private string[] pathsToHide = new string[]
+        {
+            "Dog/Rig",
+            "Dog/Mesh_LOD1"
+        };
+
+        // 目标着色器名称
+        private string targetShaderName = "SodaCraft/SodaCharacter";
+        
+        // 状态标志
+        private bool isBundleLoaded = false;
+        private bool isWaitingForPet = false;
+
+        private void Start()
+        {
+            Debug.Log("SimplePetMod: 开始加载");
+            StartCoroutine(LoadPetBundle());
+            
+            // 订阅场景加载事件
+            LevelManager.OnAfterLevelInitialized += OnLevelLoaded;
+        }
+
+        private void Update()
+        {
+            if (petAnimator == null || characterModel == null || movement == null)
+                return;
+
+            // 简单的动画控制：Idle 和 Moving
+            Vector3 velocity = movement.Velocity;
+            bool isMoving = velocity.magnitude > 0.1f;
+            
+            petAnimator.SetBool("Moving", isMoving);
+        }
+
+        private IEnumerator LoadPetBundle()
+        {
+            string bundlePath = Path.Combine(GetModDirectory(), "sensei_dog");
+            
+            Debug.Log($"SimplePetMod: 尝试加载资源包 - {bundlePath}");
+            
+            if (!File.Exists(bundlePath))
+            {
+                Debug.LogError($"SimplePetMod: 资源包不存在 - {bundlePath}");
+                yield break;
+            }
+
+            AssetBundleCreateRequest request = AssetBundle.LoadFromFileAsync(bundlePath);
+            yield return request;
+
+            try
+            {
+                loadedBundle = request.assetBundle;
+                
+                if (loadedBundle == null)
+                {
+                    Debug.LogError("SimplePetMod: 资源包加载失败");
+                    yield break;
+                }
+
+                Debug.Log("SimplePetMod: 资源包加载成功，开始加载模型");
+                
+                AssetBundleRequest assetRequest = loadedBundle.LoadAssetAsync<GameObject>("SenseiDogModle");
+                yield return assetRequest;
+
+                loadedObject = assetRequest.asset as GameObject;
+                
+                if (loadedObject == null)
+                {
+                    Debug.LogError("SimplePetMod: 模型资源加载失败 - SenseiDogModle");
+                    loadedBundle.Unload(true);
+                    yield break;
+                }
+
+                Debug.Log("SimplePetMod: 模型资源加载成功");
+                isBundleLoaded = true;
+                
+                // 开始等待宠物加载
+                StartCoroutine(WaitForPet());
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError($"SimplePetMod: 加载过程异常 - {ex.Message}");
+            }
+        }
+
+        private IEnumerator WaitForPet()
+        {
+            if (isWaitingForPet)
+            {
+                Debug.Log("SimplePetMod: 已在等待宠物加载中");
+                yield break;
+            }
+            
+            isWaitingForPet = true;
+            Debug.Log("SimplePetMod: 等待宠物角色加载...");
+            
+            // 等待宠物角色加载完成
+            while (LevelManager.Instance == null || 
+                   LevelManager.Instance.PetCharacter == null || 
+                   LevelManager.Instance.PetCharacter.characterModel == null)
+            {
+                yield return new WaitForSeconds(0.5f);
+            }
+
+            try
+            {
+                characterModel = LevelManager.Instance.PetCharacter.characterModel;
+                movement = characterModel.characterMainControl.movementControl;
+                
+                Debug.Log("SimplePetMod: 宠物角色已找到，开始替换模型");
+                ReplaceModel();
+                isWaitingForPet = false;
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError($"SimplePetMod: 宠物替换失败 - {ex.Message}");
+                isWaitingForPet = false;
+            }
+        }
+
+        private void ReplaceModel()
+        {
+            if (loadedObject == null)
+            {
+                Debug.LogError("SimplePetMod: 模型资源为空");
+                return;
+            }
+
+            try
+            {
+                // 先清理可能存在的旧实例
+                if (instantedObject != null)
+                {
+                    Destroy(instantedObject);
+                    instantedObject = null;
+                    petAnimator = null;
+                }
+
+                // 隐藏原宠物
+                HideOriginalPet();
+                
+                // 实例化新模型
+                instantedObject = Instantiate(loadedObject, characterModel.transform);
+                instantedObject.transform.localPosition = Vector3.zero;
+                instantedObject.transform.localRotation = Quaternion.identity;
+                instantedObject.transform.localScale = Vector3.one;
+                
+                // 替换着色器
+                ReplaceAllShaders(instantedObject, targetShaderName);
+                
+                // 获取动画控制器
+                petAnimator = instantedObject.GetComponent<Animator>();
+                
+                if (petAnimator == null)
+                {
+                    // 尝试在子物体中查找
+                    petAnimator = instantedObject.GetComponentInChildren<Animator>();
+                }
+                
+                if (petAnimator == null)
+                {
+                    Debug.LogWarning("SimplePetMod: 新模型没有找到Animator组件");
+                }
+                else
+                {
+                    Debug.Log("SimplePetMod: 动画控制器已找到并设置");
+                }
+                
+                Debug.Log("SimplePetMod: 模型替换完成");
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError($"SimplePetMod: 模型实例化失败 - {ex.Message}");
+            }
+        }
+
+        // 场景加载完成时的回调
+        private void OnLevelLoaded()
+        {
+            Debug.Log("SimplePetMod: 检测到场景加载完成，重新应用宠物替换");
+            
+            // 重置状态
+            characterModel = null;
+            movement = null;
+            petAnimator = null;
+            
+            // 清理旧实例
+            if (instantedObject != null)
+            {
+                Destroy(instantedObject);
+                instantedObject = null;
+            }
+            
+            // 如果资源包已加载，重新等待宠物
+            if (isBundleLoaded)
+            {
+                StartCoroutine(WaitForPet());
+            }
+            else
+            {
+                Debug.LogWarning("SimplePetMod: 资源包尚未加载，无法重新应用宠物替换");
+            }
+        }
+
+        private void ReplaceAllShaders(GameObject target, string shaderName)
+        {
+            try
+            {
+                Shader targetShader = Shader.Find(shaderName);
+                if (targetShader == null)
+                {
+                    Debug.LogError($"SimplePetMod: 找不到着色器 - {shaderName}");
+                    return;
+                }
+
+                Debug.Log($"SimplePetMod: 开始替换着色器 - {shaderName}");
+                ProcessRenderersRecursive(target, targetShader);
+                Debug.Log("SimplePetMod: 着色器替换完成");
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError($"SimplePetMod: 着色器替换失败 - {ex.Message}");
+            }
+        }
+
+        private void ProcessRenderersRecursive(GameObject obj, Shader targetShader)
+        {
+            // 处理当前物体的Renderer
+            Renderer renderer = obj.GetComponent<Renderer>();
+            if (renderer != null)
+            {
+                ReplaceRendererShaders(renderer, targetShader);
+            }
+
+            // 递归处理所有子物体
+            for (int i = 0; i < obj.transform.childCount; i++)
+            {
+                ProcessRenderersRecursive(obj.transform.GetChild(i).gameObject, targetShader);
+            }
+        }
+
+        private void ReplaceRendererShaders(Renderer renderer, Shader targetShader)
+        {
+            try
+            {
+                Material[] materials = renderer.materials;
+                bool replaced = false;
+                
+                for (int i = 0; i < materials.Length; i++)
+                {
+                    if (materials[i] != null)
+                    {
+                        materials[i].shader = targetShader;
+                        replaced = true;
+                    }
+                }
+                
+                if (replaced)
+                {
+                    Debug.Log($"SimplePetMod: 已替换 {renderer.gameObject.name} 的着色器");
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError($"SimplePetMod: 替换 {renderer.gameObject.name} 的着色器时出错 - {ex.Message}");
+            }
+        }
+
+        private void HideOriginalPet()
+        {
+            try
+            {
+                bool foundAny = false;
+                foreach (string path in pathsToHide)
+                {
+                    Transform target = characterModel.transform.Find(path);
+                    if (target != null)
+                    {
+                        target.gameObject.SetActive(false);
+                        foundAny = true;
+                        Debug.Log($"SimplePetMod: 已隐藏 - {path}");
+                    }
+                    else
+                    {
+                        Debug.LogWarning($"SimplePetMod: 未找到路径 - {path}");
+                    }
+                }
+                
+                if (!foundAny)
+                {
+                    Debug.LogWarning("SimplePetMod: 未找到任何原宠物部件，尝试备用方案");
+                    // 备用方案：尝试隐藏整个Dog节点
+                    Transform dogTransform = characterModel.transform.Find("Dog");
+                    if (dogTransform != null)
+                    {
+                        dogTransform.gameObject.SetActive(false);
+                        Debug.Log("SimplePetMod: 已隐藏整个Dog节点");
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError($"SimplePetMod: 隐藏原宠物失败 - {ex.Message}");
+            }
+        }
+
+        private string GetModDirectory()
+        {
+            return Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location);
+        }
+
+        private void OnDisable()
+        {
+            Debug.Log("SimplePetMod: 模组禁用");
+            CleanupResources();
+            
+            // 取消事件订阅
+            LevelManager.OnAfterLevelInitialized -= OnLevelLoaded;
+        }
+
+        private void OnDestroy()
+        {
+            Debug.Log("SimplePetMod: 模组销毁");
+            CleanupResources();
+            
+            // 取消事件订阅
+            LevelManager.OnAfterLevelInitialized -= OnLevelLoaded;
+        }
+
+        private void CleanupResources()
+        {
+            // 清理实例化的对象
+            if (instantedObject != null)
+            {
+                Destroy(instantedObject);
+                instantedObject = null;
+            }
+            
+            // 清理加载的资源
+            if (loadedBundle != null)
+            {
+                loadedBundle.Unload(true);
+                loadedBundle = null;
+            }
+            
+            loadedObject = null;
+            petAnimator = null;
+            isBundleLoaded = false;
+            isWaitingForPet = false;
+        }
+    }
+}
